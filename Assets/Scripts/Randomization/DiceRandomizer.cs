@@ -112,11 +112,6 @@ public class DiceRandomizer : Randomizer
             if (!value)
             {
                 CurrentValue = 0;
-
-                if (boundingRectDebugger != null)
-                {
-                    DebuggerFactory.DisableOrDestroyRectDebugger(boundingRectDebugger);
-                }
                 BoundingRect = new SimpleRect(0f, 0f, 0f, 0f);
             }
 
@@ -174,7 +169,7 @@ public class DiceRandomizer : Randomizer
 
     [SerializeField] private DiceMeshData currentMeshData;
 
-    [SerializeField, HideInInspector] private RectDebugger boundingRectDebugger;
+    [SerializeField, HideInInspector] private DiceDebugger diceDebugger;
 
     private void Update()
     {
@@ -308,7 +303,7 @@ public class DiceRandomizer : Randomizer
         diceCorners[6] = new Vector3(diceBounds.min.x, diceBounds.max.y, diceBounds.max.z);
         diceCorners[7] = diceBounds.max;
 
-        //Need to figure this out if we want y-axis rotation of the dice (for now rotate the camera)
+        // Need to figure this out if we want y-axis rotation of the dice (for now rotate the camera)
         //for (int i = 0; i < diceCorners.Length; i++)
         //{
         //    diceCorners[i] = transform.TransformPoint(diceCorners[i]);
@@ -356,14 +351,29 @@ public class DiceRandomizer : Randomizer
         BoundingRect = new SimpleRect(screenMin.x, screenMin.y, screenMax.x, screenMax.y);
         if (debug)
         {
-            if (boundingRectDebugger == null || !boundingRectDebugger.gameObject.activeInHierarchy)
+            if (diceDebugger == null || !diceDebugger.gameObject.activeInHierarchy)
             {
-                boundingRectDebugger = DebuggerFactory.GetOrCreateRectDebugger(BoundingRect, "BBox Debugger " + name);
+                diceDebugger = DebuggerFactory.GetOrCreateDiceDebugger(BoundingRect, CurrentValue.ToString(), $"{name} Debugger");
             }
             else
             {
-                boundingRectDebugger.SetRectTransform(BoundingRect);
+                diceDebugger.UpdateDebugger(BoundingRect, CurrentValue.ToString());
             }
         }
+    }
+
+    private void OnValidate()
+    {
+        Enabled = diceProbability > 0f;
+    }
+
+    private void OnDisable()
+    {
+        if (diceDebugger != null)
+        {
+            DebuggerFactory.DisableOrDestroyDiceDebugger(diceDebugger);
+        }
+
+        diceDebugger = null;
     }
 }

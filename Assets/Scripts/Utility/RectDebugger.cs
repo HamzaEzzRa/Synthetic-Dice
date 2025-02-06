@@ -39,12 +39,12 @@ public class RectDebugger : MonoBehaviour
     private RectTransform rectTransform;
     private Image image;
 
-    public void SetRectTransform(SimpleRect simpleRect)
+    public void SetRectTransform(SimpleRect rect)
     {
-        float width = simpleRect.xMax - simpleRect.xMin;
-        float height = simpleRect.yMax - simpleRect.yMin;
+        float width = rect.xMax - rect.xMin;
+        float height = rect.yMax - rect.yMin;
 
-        RectTransform.anchoredPosition = new Vector2(simpleRect.xMin, simpleRect.yMin);
+        RectTransform.anchoredPosition = new Vector2(rect.xMin, rect.yMin);
         RectTransform.sizeDelta = new Vector2(width, height);
     }
 

@@ -10,7 +10,7 @@ public class SimulatorEditorWindow : EditorWindow
     private class MemberInfoWrapper : MemberInfo
     {
         public string c_Name { get; private set; }
-        public Type c_MemberType { get; private set;  }
+        public Type c_MemberType { get; private set; }
 
         public MemberInfoWrapper(string name, Type memberType)
         {
@@ -29,7 +29,12 @@ public class SimulatorEditorWindow : EditorWindow
 
     private Vector2 scrollPosition;
     private Dictionary<Type, List<Randomizer>> groupedRandomizers = new Dictionary<Type, List<Randomizer>>();
+
+    private PoseGenerator poseGenerator;
+    private DatasetGenerator datasetGenerator;
+
     private Dictionary<Type, bool> groupFoldouts = new Dictionary<Type, bool>();
+    private Dictionary<string, bool> labelFoldouts = new Dictionary<string, bool>();
 
     // Define list of properties/fields to display by name
     private static readonly HashSet<string> TargetProperties = new HashSet<string>
@@ -49,10 +54,30 @@ public class SimulatorEditorWindow : EditorWindow
         "randomizePosition",
         "randomizeRotation",
 
+        // AmbientLightRandomizer
+        "ambientIntensityRange",
+
         // DiceRandomizer
+        "meshData",
+        "diceProbability",
+        "diceScaleRange",
+        "diceColors",
+        "diceMetallic",
+        "diceSmoothness",
+        "dotColors",
+        "dotMetallic",
+        "dotSmoothness",
 
         // ColorRandomizer
         "randomColors",
+
+        // DatasetGenerator
+        "width",
+        "height",
+        "minDiceVisibleSurface",
+        "imageEncoding",
+        "datasetSize",
+        "yoloFormat",
     };
 
     [MenuItem("SyntheticDice/Simulator")]
@@ -63,15 +88,18 @@ public class SimulatorEditorWindow : EditorWindow
 
     private void OnEnable()
     {
-        CacheRandomizers();
+        RefreshCache();
     }
 
-    private void CacheRandomizers()
+    private void RefreshCache()
     {
         groupedRandomizers.Clear();
         groupFoldouts.Clear();
+        labelFoldouts.Clear();
 
         var allRandomizers = FindObjectsOfType<Randomizer>();
+        poseGenerator = FindObjectOfType<PoseGenerator>();
+        datasetGenerator = FindObjectOfType<DatasetGenerator>();
 
         foreach (var randomizer in allRandomizers)
         {
@@ -80,11 +108,14 @@ public class SimulatorEditorWindow : EditorWindow
             if (!groupedRandomizers.ContainsKey(type))
             {
                 groupedRandomizers[type] = new List<Randomizer>();
-                groupFoldouts[type] = false; // Defaults to folded
+                groupFoldouts[type] = false; // Defaults group to folded
             }
 
             groupedRandomizers[type].Add(randomizer);
+            labelFoldouts[randomizer.name] = false; // Defaults randomizer to folded
         }
+        // Sort the groups by name
+        groupedRandomizers = groupedRandomizers.OrderBy(kv => kv.Key.Name).ToDictionary(kv => kv.Key, kv => kv.Value);
 
         // Sort the objects in each group by name
         var sortedRandomizers = new Dictionary<Type, List<Randomizer>>();
@@ -97,19 +128,29 @@ public class SimulatorEditorWindow : EditorWindow
 
     private void OnGUI()
     {
-        if (GUILayout.Button("Refresh"))
+        if (GUILayout.Button(new GUIContent("Reset", "Reset all parameters to their original values.")))
         {
-            CacheRandomizers();
+
         }
+        if (GUILayout.Button(new GUIContent("Refresh", "Refresh the cached objects.")))
+        {
+            RefreshCache();
+        }
+        EditorGUILayout.Space();
 
         scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
+
+        EditorGUILayout.LabelField("Pose Settings", EditorStyles.boldLabel);
+        EditorGUI.indentLevel++;
 
         foreach (var group in groupedRandomizers)
         {
             Type childType = group.Key;
             List<Randomizer> randomizers = group.Value;
 
-            groupFoldouts[childType] = EditorGUILayout.Foldout(groupFoldouts[childType], $"{childType.Name} ({randomizers.Count})");
+            int count = randomizers.Count;
+            string groupName = FormatLabel(childType.Name) + (count > 1 ? "s" : "");
+            groupFoldouts[childType] = EditorGUILayout.Foldout(groupFoldouts[childType], $"{groupName} ({randomizers.Count})", true);
 
             if (groupFoldouts[childType])
             {
@@ -117,33 +158,77 @@ public class SimulatorEditorWindow : EditorWindow
 
                 foreach (var randomizer in randomizers)
                 {
-                    EditorGUILayout.LabelField($"{randomizer.name}", EditorStyles.boldLabel);
-                    DisplayTargetedProperties(randomizer);
+                    string randomizerName = FormatLabel(randomizer.name);
+                    labelFoldouts[randomizer.name] = EditorGUILayout.Foldout(labelFoldouts[randomizer.name], randomizerName, true);
+
+                    if (labelFoldouts[randomizer.name])
+                    {
+                        EditorGUI.indentLevel++;
+                        DisplayTargetProperties(randomizer, randomizer.GetType());
+                        EditorGUI.indentLevel--;
+                    }
                 }
 
                 EditorGUI.indentLevel--;
             }
         }
 
+        EditorGUI.indentLevel--;
+        if (poseGenerator != null)
+        {
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(new GUIContent("Randomize Pose", "Choose values from all randomizers and apply them to the scene.")))
+            {
+                poseGenerator.Generate();
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        EditorGUILayout.Space();
+        EditorGUILayout.LabelField("Dataset Settings", EditorStyles.boldLabel);
+
+        if (datasetGenerator != null)
+        {
+            EditorGUI.indentLevel++;
+
+            DisplayTargetProperties(datasetGenerator, datasetGenerator.GetType());
+            EditorGUILayout.BeginHorizontal();
+            if (datasetGenerator.CurrentCoroutine == null)
+            {
+                if (GUILayout.Button(new GUIContent("Generate", "Generate a dataset using the current settings.")))
+                {
+                    datasetGenerator.Generate();
+                }
+            }
+            else
+            {
+                if (GUILayout.Button(new GUIContent("Stop", "Stop the ongoing dataset generation.")))
+                {
+                    datasetGenerator.Stop();
+                }
+            }
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUI.indentLevel--;
+        }
+
         EditorGUILayout.EndScrollView();
     }
 
-    private void DisplayTargetedProperties(Randomizer randomizer)
+    private void DisplayTargetProperties(UnityEngine.Object obj, Type type)
     {
-        var type = randomizer.GetType();
-
         // Display targeted fields
         foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
         {
             if (TargetProperties.Contains(field.Name))
             {
-                object value = field.GetValue(randomizer);
+                object value = field.GetValue(obj);
                 object newValue = DrawField(field, value);
 
                 if (!Equals(value, newValue))
                 {
-                    field.SetValue(randomizer, newValue);
-                    EditorUtility.SetDirty(randomizer); // Mark as dirty for Undo
+                    field.SetValue(obj, newValue);
+                    EditorUtility.SetDirty(obj); // Mark as dirty for Undo
                 }
             }
         }
@@ -153,13 +238,13 @@ public class SimulatorEditorWindow : EditorWindow
         {
             if (property.CanRead && property.CanWrite && TargetProperties.Contains(property.Name))
             {
-                object value = property.GetValue(randomizer);
+                object value = property.GetValue(obj);
                 object newValue = DrawField(property, value);
 
                 if (!Equals(value, newValue))
                 {
-                    property.SetValue(randomizer, newValue);
-                    EditorUtility.SetDirty(randomizer); // Mark as dirty for Undo
+                    property.SetValue(obj, newValue);
+                    EditorUtility.SetDirty(obj); // Mark as dirty for Undo
                 }
             }
         }
@@ -168,6 +253,8 @@ public class SimulatorEditorWindow : EditorWindow
     private object DrawField(MemberInfo member, object value)
     {
         string label = member.Name;
+        string formattedLabel = FormatLabel(label);
+
         Type type;
         if (member is PropertyInfo pi)
         {
@@ -194,7 +281,7 @@ public class SimulatorEditorWindow : EditorWindow
             {
                 if (customAttribute is FloatRangeSliderAttribute floatRangeSlider)
                 {
-                    return DrawFloatRangeSlider(label, value, floatRangeSlider);
+                    return DrawFloatRangeSlider(formattedLabel, value, floatRangeSlider);
                 }
             }
         }
@@ -202,47 +289,55 @@ public class SimulatorEditorWindow : EditorWindow
         // Check and handle custom types
         if (type == typeof(Vector3Range))
         {
-            return DrawVector3Range(label, value);
+            return DrawVector3Range(formattedLabel, value);
+        }
+        if (type == typeof(DiceMeshData))
+        {
+            return DrawDiceMeshData(formattedLabel, value);
         }
 
         if (type == typeof(int))
         {
-            return EditorGUILayout.IntField(label, (int)value);
+            return EditorGUILayout.IntField(formattedLabel, (int)value);
         }
         if (type == typeof(float))
         {
-            return EditorGUILayout.FloatField(label, (float)value);
+            return EditorGUILayout.FloatField(formattedLabel, (float)value);
         }
         if (type == typeof(string))
         {
-            return EditorGUILayout.TextField(label, (string)value);
+            return EditorGUILayout.TextField(formattedLabel, (string)value);
         }
         if (type == typeof(bool))
         {
-            return EditorGUILayout.Toggle(label, (bool)value);
+            return EditorGUILayout.Toggle(formattedLabel, (bool)value);
         }
         if (type == typeof(Vector3))
         {
-            return EditorGUILayout.Vector3Field(label, (Vector3)value);
+            return EditorGUILayout.Vector3Field(formattedLabel, (Vector3)value);
         }
         if (type == typeof(Color))
         {
-            return EditorGUILayout.ColorField(label, (Color)value);
+            return EditorGUILayout.ColorField(formattedLabel, (Color)value);
         }
         if (typeof(UnityEngine.Object).IsAssignableFrom(type))
         {
-            return EditorGUILayout.ObjectField(label, (UnityEngine.Object)value, type, true);
+            return EditorGUILayout.ObjectField(formattedLabel, (UnityEngine.Object)value, type, true);
+        }
+        if (type.IsEnum)
+        {
+            return EditorGUILayout.EnumPopup(formattedLabel, (Enum)value);
         }
         if (type.IsArray)
         {
-            return DrawArrayField(label, value, type);
+            return DrawArrayField(formattedLabel, value, type);
         }
         if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>))
         {
-            return DrawListField(label, value, type);
+            return DrawListField(formattedLabel, value, type);
         }
 
-        EditorGUILayout.LabelField($"{label}: {value} (Unsupported type)");
+        EditorGUILayout.LabelField($"{formattedLabel}: {value} (Unsupported type)");
         return value;
     }
 
@@ -251,9 +346,21 @@ public class SimulatorEditorWindow : EditorWindow
         Type elementType = arrayType.GetElementType();
         var array = (Array)value;
 
-        EditorGUILayout.LabelField(label);
-        EditorGUI.indentLevel++;
+        string formattedLabel = label.Split('>').Last(); // Remove parent label
+        formattedLabel = FormatLabel(formattedLabel); // Apply Unity label formatting
 
+        if (!labelFoldouts.ContainsKey(label))
+        {
+            labelFoldouts[label] = false; // Defaults array to folded
+        }
+
+        labelFoldouts[label] = EditorGUILayout.Foldout(labelFoldouts[label], formattedLabel, true);
+        if (!labelFoldouts[label])
+        {
+            return array;
+        }
+
+        EditorGUI.indentLevel++;
         if (array == null)
         {
             EditorGUILayout.LabelField("Array is null.");
@@ -286,7 +393,7 @@ public class SimulatorEditorWindow : EditorWindow
         for (int i = 0; i < array.Length; i++)
         {
             object element = array.GetValue(i);
-            object newElement = DrawField(new MemberInfoWrapper($"Element {i}", elementType), element);
+            object newElement = DrawField(new MemberInfoWrapper($"{formattedLabel} [{i}]", elementType), element);
 
             if (!Equals(element, newElement))
             {
@@ -303,9 +410,21 @@ public class SimulatorEditorWindow : EditorWindow
         Type elementType = listType.GetGenericArguments()[0];
         var list = (System.Collections.IList)value;
 
-        EditorGUILayout.LabelField(label, EditorStyles.boldLabel);
-        EditorGUI.indentLevel++;
+        string formattedLabel = label.Split('>').Last(); // Remove parent label
+        formattedLabel = FormatLabel(formattedLabel); // Apply Unity label formatting
 
+        if (!labelFoldouts.ContainsKey(label))
+        {
+            labelFoldouts[label] = false; // Defaults list to folded
+        }
+
+        labelFoldouts[label] = EditorGUILayout.Foldout(labelFoldouts[label], formattedLabel, true);
+        if (!labelFoldouts[label])
+        {
+            return list;
+        }
+
+        EditorGUI.indentLevel++;
         if (list == null)
         {
             EditorGUILayout.LabelField("List is null.");
@@ -330,7 +449,7 @@ public class SimulatorEditorWindow : EditorWindow
         for (int i = 0; i < list.Count; i++)
         {
             object element = list[i];
-            object newElement = DrawField(new MemberInfoWrapper($"Element {i}", elementType), element);
+            object newElement = DrawField(new MemberInfoWrapper($"{formattedLabel} [{i}]", elementType), element);
 
             if (!Equals(element, newElement))
             {
@@ -355,8 +474,8 @@ public class SimulatorEditorWindow : EditorWindow
         FloatRangeSliderAttribute limit = attribute;
         EditorGUILayout.MinMaxSlider(ref minValue, ref maxValue, limit.Min, limit.Max);
 
-        minValue = EditorGUILayout.FloatField("Min Value", minValue);
-        maxValue = EditorGUILayout.FloatField("Max Value", maxValue);
+        minValue = EditorGUILayout.FloatField("Min", minValue);
+        maxValue = EditorGUILayout.FloatField("Max", maxValue);
 
         if (minValue < limit.Min)
         {
@@ -398,5 +517,39 @@ public class SimulatorEditorWindow : EditorWindow
 
         EditorGUI.indentLevel--;
         return value;
+    }
+
+    private object DrawDiceMeshData(string label, object value, bool foldable = false)
+    {
+        DiceMeshData diceMeshData = value as DiceMeshData;
+
+        if (!labelFoldouts.ContainsKey(label))
+        {
+            labelFoldouts[label] = false; // Defaults mesh data to folded
+        }
+
+        labelFoldouts[label] = EditorGUILayout.Foldout(labelFoldouts[label], label, true);
+        if (!labelFoldouts[label])
+        {
+            return diceMeshData;
+        }
+
+        EditorGUI.indentLevel++;
+        diceMeshData.Mesh = (Mesh)EditorGUILayout.ObjectField("Mesh", diceMeshData.Mesh, typeof(Mesh), false);
+        DrawArrayField($"{label}>ValueToRotation", diceMeshData.ValueToRotation, typeof(Vector3[]));
+        EditorGUI.indentLevel--;
+
+        return diceMeshData;
+    }
+
+    private string FormatLabel(string label)
+    {
+        if (string.IsNullOrEmpty(label))
+        {
+            return label;
+        }
+
+        var formattedLabel = System.Text.RegularExpressions.Regex.Replace(label, "(\\B[A-Z])", " $1");
+        return char.ToUpper(formattedLabel[0]) + formattedLabel.Substring(1);
     }
 }
