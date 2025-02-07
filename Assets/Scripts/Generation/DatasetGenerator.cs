@@ -13,17 +13,27 @@ public struct LabelData
 {
     public int value;
     public SimpleRect BBox;
+    public float angle;
 
     public LabelData(LabelData source)
     {
         value = source.value;
         BBox = source.BBox;
+        angle = source.angle;
     }
 
     public LabelData(int value, SimpleRect BBox)
     {
         this.value = value;
         this.BBox = BBox;
+        this.angle = 0f;
+    }
+
+    public LabelData(int value, SimpleRect BBox, float angle)
+    {
+        this.value = value;
+        this.BBox = BBox;
+        this.angle = angle;
     }
 }
 
@@ -33,6 +43,12 @@ public class DatasetGenerator : MonoBehaviour
     {
         PNG,
         JPEG
+    }
+
+    public enum BBoxType
+    {
+        AXIS_ALIGNED,
+        ORIENTED,
     }
 
     [SerializeField] private Camera renderCamera;
@@ -45,13 +61,16 @@ public class DatasetGenerator : MonoBehaviour
     [Header("Settings")]
     [SerializeField] private int width = 640;
     [SerializeField] private int height = 480;
-    [SerializeField, Range(0f, 1f)] private float minDiceVisibleSurface = 0.5f;
+    [SerializeField, Range(0f, 1f)] private float minimumDiceSurface = 0.5f;
 
     [SerializeField] private ImageEncoding imageEncoding;
     [SerializeField, Min(1)] private int datasetSize = 10000;
+
     [SerializeField] private bool yoloFormat = false;
+    [SerializeField] private BBoxType boundingBoxType = BBoxType.AXIS_ALIGNED;
 
     public EditorCoroutine CurrentCoroutine => currentCoroutine;
+    public float CoroutineProgress { get; private set; }
 
     private int depth = 16;
 
@@ -140,7 +159,9 @@ public class DatasetGenerator : MonoBehaviour
     {
         string datasetPath = Path.Combine(new string[] {
             System.Environment.GetFolderPath(System.Environment.SpecialFolder.Desktop), "datasets",
-            "synth-dice-" + datasetSize.ToString()
+            "synth-dice-" + datasetSize.ToString() +
+            "-" + boundingBoxType.ToString() + "_" +
+            System.DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss")
         });
         if (!Directory.Exists(datasetPath))
         {
@@ -151,6 +172,7 @@ public class DatasetGenerator : MonoBehaviour
         Dictionary<string, LabelData[]> labelDictionary = new Dictionary<string, LabelData[]>();
 
         int i = 0;
+        CoroutineProgress = 0f;
         while (i < datasetSize)
         {
             poseGenerator.Generate();
@@ -167,18 +189,31 @@ public class DatasetGenerator : MonoBehaviour
             List<LabelData> labelDataList = new List<LabelData>(dices.Length);
             for (int j = 0; j < dices.Length; j++)
             {
-                if (imageRect.Contains(dices[j].BoundingRect, minDiceVisibleSurface))
+                if (imageRect.Contains(dices[j].BoundingRect, minimumDiceSurface))
                 {
                     // Unity screen-space (0, 0) coordinate is bottom-left, OpenCV is top-left
-                    SimpleRect rect = dices[j].BoundingRect;
-                    SimpleRect yFlippedRect = new SimpleRect(
-                        rect.xMin,
-                        height - rect.yMax,
-                        rect.xMax,
-                        height - rect.yMin
-                    );
-
-                    labelDataList.Add(new LabelData(dices[j].CurrentValue, yFlippedRect));
+                    if (boundingBoxType == BBoxType.AXIS_ALIGNED)
+                    {
+                        SimpleRect rect = dices[j].BoundingRect;
+                        SimpleRect yFlippedRect = new SimpleRect(
+                            rect.xMin,
+                            height - rect.yMax,
+                            rect.xMax,
+                            height - rect.yMin
+                        );
+                        labelDataList.Add(new LabelData(dices[j].CurrentValue, yFlippedRect));
+                    }
+                    else if (boundingBoxType == BBoxType.ORIENTED)
+                    {
+                        AngledRect angledRect = dices[j].AngledBoundingRect;
+                        SimpleRect yFlippedRect = new SimpleRect(
+                            angledRect.Rect.xMin,
+                            height - angledRect.Rect.yMax,
+                            angledRect.Rect.xMax,
+                            height - angledRect.Rect.yMin
+                        );
+                        labelDataList.Add(new LabelData(dices[j].CurrentValue, yFlippedRect, angledRect.Angle));
+                    }
                 }
             }
 
@@ -224,12 +259,8 @@ public class DatasetGenerator : MonoBehaviour
                 copy = null;
             });
 
-            if ((i + 1) % Mathf.Min(1000, datasetSize) == 0)
-            {
-                Debug.Log("Generation Progress: " + (i + 1) + " / " + datasetSize);
-            }
-
             i++;
+            CoroutineProgress = (float)i / datasetSize;
         }
 
         if (yoloFormat)
@@ -251,11 +282,15 @@ public class DatasetGenerator : MonoBehaviour
                         LabelData labelData = labelDataArray[j];
                         Vector2 min = new Vector2(Mathf.Max(0f, labelData.BBox.xMin / width), Mathf.Max(0f, labelData.BBox.yMin / height));
                         Vector2 max = new Vector2(Mathf.Min(1f, labelData.BBox.xMax / width), Mathf.Min(1f, labelData.BBox.yMax / height));
+                        float angle = labelData.angle;
 
-                        // YOLO label: <object-class> <x_center> <y_center> <width> <height>
-                        writer.WriteLine(
-                            $"{labelData.value - 1} {(min.x + max.x) / 2f} {(min.y + max.y) / 2f} {max.x - min.x} {max.y - min.y}"
-                        );
+                        // YOLO label: <class_idx> <x_center> <y_center> <width> <height> [<angle>]
+                        string labelLine = $"{labelData.value - 1} {(min.x + max.x) / 2f} {(min.y + max.y) / 2f} {max.x - min.x} {max.y - min.y}";
+                        if (boundingBoxType == BBoxType.ORIENTED)
+                        {
+                            labelLine += $" {angle}";
+                        }
+                        writer.WriteLine(labelLine);
                     }
                 }
             }
@@ -263,7 +298,7 @@ public class DatasetGenerator : MonoBehaviour
         else
         {
             string jsonPath = Path.Combine(datasetPath, "labels.json");
-            SaveToJson(labelDictionary, jsonPath);
+            DumpAsJson(labelDictionary, jsonPath);
         }
 
         currentCoroutine = null;
@@ -280,7 +315,7 @@ public class DatasetGenerator : MonoBehaviour
         return totalValue;
     }
 
-    private void SaveToJson(object data, string filePath = "./dataset.json")
+    private void DumpAsJson(object data, string filePath = "./dataset.json")
     {
         if (!File.Exists(filePath))
         {

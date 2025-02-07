@@ -1,6 +1,8 @@
 using UnityEngine;
 using UnityEngine.UI;
 
+using TMPro;
+
 public class TextDebugger : MonoBehaviour
 {
     public RectTransform RectTransform
@@ -19,16 +21,16 @@ public class TextDebugger : MonoBehaviour
         }
     }
 
-    public Text Text
+    public TextMeshProUGUI Text
     {
         get
         {
             if (text == null)
             {
-                text = GetComponent<Text>();
+                text = GetComponent<TextMeshProUGUI>();
                 if (text == null)
                 {
-                    text = gameObject.AddComponent<Text>();
+                    text = gameObject.AddComponent<TextMeshProUGUI>();
                 }
             }
             return text;
@@ -53,7 +55,7 @@ public class TextDebugger : MonoBehaviour
 
     private ContentSizeFitter contentSizeFitter;
     private RectTransform rectTransform;
-    private Text text;
+    private TextMeshProUGUI text;
 
     public void SetRectTransform(SimpleRect rect)
     {
@@ -64,27 +66,41 @@ public class TextDebugger : MonoBehaviour
         RectTransform.sizeDelta = new Vector2(width, height);
     }
 
+    public void SetRectTransform(AngledRect angledRect)
+    {
+        float width = angledRect.Rect.xMax - angledRect.Rect.xMin;
+        float height = angledRect.Rect.yMax - angledRect.Rect.yMin;
+
+        RectTransform.anchoredPosition = new Vector2(angledRect.Rect.xMin, angledRect.Rect.yMin);
+        RectTransform.sizeDelta = new Vector2(width, height);
+        RectTransform.localEulerAngles = new Vector3(0, 0, angledRect.Angle);
+    }
+
     public void SetRectTransform(Rect rect)
     {
         RectTransform.anchoredPosition = new Vector2(rect.x, rect.y);
         RectTransform.sizeDelta = new Vector2(rect.width, rect.height);
     }
 
-    public void SetText(string text) {
-        Text.text = text;
+    public void SetText(string text, int fontSize=24, int minFontSize=14, int maxFontSize=42, FontStyles fontStyle=FontStyles.Normal) {
+        Text.SetText(text);
+        Text.fontSize = Mathf.Clamp(fontSize, minFontSize, maxFontSize);
+        Text.fontStyle = fontStyle;
+    }
+
+    public void SetTextColor(Color color)
+    {
+        Text.color = color;
     }
 
     public void OnValidate()
     {
-        Text.color = Color.red;
-        Text.fontSize = 24;
-
         ContentSizeFitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
         ContentSizeFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
     }
 
     private void OnDisable()
     {
-        DebuggerFactory.DisableOrDestroyTextDebugger(this);
+        DebuggerFactory.DestroyTextDebugger(this);
     }
 }

@@ -51,8 +51,8 @@ public class SimulatorEditorWindow : EditorWindow
         "intensityRange",
         "positionRange",
         "eulerAnglesRange",
-        "randomizePosition",
-        "randomizeRotation",
+        //"randomizePosition",
+        //"randomizeRotation",
 
         // AmbientLightRandomizer
         "ambientIntensityRange",
@@ -67,6 +67,8 @@ public class SimulatorEditorWindow : EditorWindow
         "dotColors",
         "dotMetallic",
         "dotSmoothness",
+        "meshContribution",
+        "debugMode",
 
         // ColorRandomizer
         "randomColors",
@@ -74,10 +76,11 @@ public class SimulatorEditorWindow : EditorWindow
         // DatasetGenerator
         "width",
         "height",
-        "minDiceVisibleSurface",
+        "minimumDiceSurface",
         "imageEncoding",
         "datasetSize",
         "yoloFormat",
+        "boundingBoxType"
     };
 
     [MenuItem("SyntheticDice/Simulator")]
@@ -97,7 +100,7 @@ public class SimulatorEditorWindow : EditorWindow
         groupFoldouts.Clear();
         labelFoldouts.Clear();
 
-        var allRandomizers = FindObjectsOfType<Randomizer>();
+        var allRandomizers = FindObjectsOfType<Randomizer>(true);
         poseGenerator = FindObjectOfType<PoseGenerator>();
         datasetGenerator = FindObjectOfType<DatasetGenerator>();
 
@@ -128,15 +131,11 @@ public class SimulatorEditorWindow : EditorWindow
 
     private void OnGUI()
     {
-        if (GUILayout.Button(new GUIContent("Reset", "Reset all parameters to their original values.")))
-        {
-
-        }
         if (GUILayout.Button(new GUIContent("Refresh", "Refresh the cached objects.")))
         {
             RefreshCache();
         }
-        EditorGUILayout.Space();
+        EditorGUILayout.Space(8f);
 
         scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
 
@@ -173,6 +172,8 @@ public class SimulatorEditorWindow : EditorWindow
             }
         }
 
+        EditorGUILayout.Space(4f);
+
         EditorGUI.indentLevel--;
         if (poseGenerator != null)
         {
@@ -184,20 +185,25 @@ public class SimulatorEditorWindow : EditorWindow
             EditorGUILayout.EndHorizontal();
         }
 
-        EditorGUILayout.Space();
+        EditorGUILayout.Space(8f);
         EditorGUILayout.LabelField("Dataset Settings", EditorStyles.boldLabel);
 
         if (datasetGenerator != null)
         {
             EditorGUI.indentLevel++;
-
             DisplayTargetProperties(datasetGenerator, datasetGenerator.GetType());
+            EditorGUI.indentLevel--;
+
+            EditorGUILayout.Space(4f);
+
             EditorGUILayout.BeginHorizontal();
             if (datasetGenerator.CurrentCoroutine == null)
             {
+                EditorApplication.update -= Repaint;
                 if (GUILayout.Button(new GUIContent("Generate", "Generate a dataset using the current settings.")))
                 {
                     datasetGenerator.Generate();
+                    EditorApplication.update += Repaint;
                 }
             }
             else
@@ -205,11 +211,16 @@ public class SimulatorEditorWindow : EditorWindow
                 if (GUILayout.Button(new GUIContent("Stop", "Stop the ongoing dataset generation.")))
                 {
                     datasetGenerator.Stop();
+                    EditorApplication.update -= Repaint;
                 }
             }
             EditorGUILayout.EndHorizontal();
 
-            EditorGUI.indentLevel--;
+            if (datasetGenerator.CurrentCoroutine != null)
+            {
+                float progress = datasetGenerator.CoroutineProgress;
+                EditorGUI.ProgressBar(EditorGUILayout.GetControlRect(), progress, $"{progress * 100f:F2}%");
+            }
         }
 
         EditorGUILayout.EndScrollView();
@@ -217,6 +228,8 @@ public class SimulatorEditorWindow : EditorWindow
 
     private void DisplayTargetProperties(UnityEngine.Object obj, Type type)
     {
+        Undo.RecordObject(obj, "Modify " + obj.name); // Record changes for undo
+
         // Display targeted fields
         foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
         {
@@ -229,6 +242,9 @@ public class SimulatorEditorWindow : EditorWindow
                 {
                     field.SetValue(obj, newValue);
                     EditorUtility.SetDirty(obj); // Mark as dirty for Undo
+
+                    SerializedObject so = new SerializedObject(obj);
+                    so.ApplyModifiedProperties();
                 }
             }
         }
@@ -245,6 +261,9 @@ public class SimulatorEditorWindow : EditorWindow
                 {
                     property.SetValue(obj, newValue);
                     EditorUtility.SetDirty(obj); // Mark as dirty for Undo
+
+                    SerializedObject so = new SerializedObject(obj);
+                    so.ApplyModifiedProperties();
                 }
             }
         }
@@ -279,6 +298,16 @@ public class SimulatorEditorWindow : EditorWindow
         {
             foreach (var customAttribute in customAttributes)
             {
+                if (customAttribute is RangeAttribute rangeAttribute) {
+                    if (type == typeof(int))
+                    {
+                        return EditorGUILayout.IntSlider(formattedLabel, (int)value, (int)rangeAttribute.min, (int)rangeAttribute.max);
+                    }
+                    if (type == typeof(float))
+                    {
+                        return EditorGUILayout.Slider(formattedLabel, (float)value, rangeAttribute.min, rangeAttribute.max);
+                    }
+                }
                 if (customAttribute is FloatRangeSliderAttribute floatRangeSlider)
                 {
                     return DrawFloatRangeSlider(formattedLabel, value, floatRangeSlider);
@@ -472,10 +501,16 @@ public class SimulatorEditorWindow : EditorWindow
 
         // Min-Max slider logic
         FloatRangeSliderAttribute limit = attribute;
-        EditorGUILayout.MinMaxSlider(ref minValue, ref maxValue, limit.Min, limit.Max);
+        EditorGUILayout.BeginHorizontal();
 
-        minValue = EditorGUILayout.FloatField("Min", minValue);
-        maxValue = EditorGUILayout.FloatField("Max", maxValue);
+        minValue = EditorGUILayout.FloatField("", minValue, GUILayout.MaxWidth(110f), GUILayout.ExpandWidth(false));
+        EditorGUILayout.MinMaxSlider(
+            ref minValue, ref maxValue, limit.Min, limit.Max, GUILayout.MinWidth(100f), GUILayout.ExpandWidth(true)
+        );
+        maxValue = EditorGUILayout.FloatField("", maxValue, GUILayout.MaxWidth(110f), GUILayout.ExpandWidth(false));
+
+        //GUILayout.FlexibleSpace();
+        EditorGUILayout.EndHorizontal();
 
         if (minValue < limit.Min)
         {
