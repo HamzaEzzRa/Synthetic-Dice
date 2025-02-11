@@ -12,9 +12,8 @@ public class DiceMeshData
 [ExecuteAlways]
 public class DiceRandomizer : Randomizer
 {
-    public enum DebugMode
+    public enum BBoxType
     {
-        NONE,
         AXIS_ALIGNED,
         ORIENTED
     }
@@ -40,8 +39,8 @@ public class DiceRandomizer : Randomizer
     [SerializeField, Range(0f, 1f)] private float diceProbability = 0.5f;
 
     [Header("Bounding Box")]
-    [SerializeField, Range(0f, 1f)] private float meshContribution = 0.5f;
-    [SerializeField] private DebugMode debugMode;
+    [SerializeField, Range(0f, 1f)] private float meshContribution = 0.1f;
+    public BBoxType boundingBoxType;
 
     public bool Enabled
     {
@@ -128,6 +127,11 @@ public class DiceRandomizer : Randomizer
         if (Random.Range(0f, 1f) > diceProbability)
         {
             Enabled = false;
+            if (diceDebugger != null)
+            {
+                DebuggerFactory.DestroyDiceDebugger(diceDebugger);
+                diceDebugger = null;
+            }
         }
         else
         {
@@ -235,7 +239,7 @@ public class DiceRandomizer : Randomizer
 
     private void GetBoundingBox()
     {
-        Mesh mesh = diceMeshFilter.sharedMesh;
+        Mesh mesh = DiceMeshFilter.sharedMesh;
         Vector3[] meshPoints;
         if (mesh.isReadable && meshContribution > 0f)
         {
@@ -294,41 +298,33 @@ public class DiceRandomizer : Randomizer
             screenPoints.Max(p => p.x), screenPoints.Max(p => p.y)
         );
 
-        // Calculate the oriented bounding box
-        Vector2[] diceHull = ComputeConvexHull(screenPoints); // Compute convex hull in 2D screen space
-        AngledBoundingRect = ComputeOrientedBoundingBox(diceHull); // Compute the minimum-area bounding rectangle
-
-        if (debugMode == DebugMode.NONE)
+        // Calculate the oriented bounding box if needed (slower)
+        if (boundingBoxType == BBoxType.ORIENTED)
         {
-            if (diceDebugger != null)
+            Vector2[] diceHull = ComputeConvexHull(screenPoints); // Compute convex hull in 2D screen space
+            AngledBoundingRect = ComputeOrientedBoundingBox(diceHull); // Compute the minimum-area bounding rectangle
+        }
+
+        if (diceDebugger == null || !diceDebugger.gameObject.activeInHierarchy)
+        {
+            if (boundingBoxType == BBoxType.AXIS_ALIGNED)
             {
-                DebuggerFactory.DestroyDiceDebugger(diceDebugger);
-                diceDebugger = null;
+                diceDebugger = DebuggerFactory.CreateDiceDebugger(BoundingRect, CurrentValue.ToString(), $"{name} Debugger");
+            }
+            else if (boundingBoxType == BBoxType.ORIENTED)
+            {
+                diceDebugger = DebuggerFactory.CreateDiceDebugger(AngledBoundingRect, CurrentValue.ToString(), $"{name} Debugger");
             }
         }
         else
         {
-            if (diceDebugger == null || !diceDebugger.gameObject.activeInHierarchy)
+            if (boundingBoxType == BBoxType.AXIS_ALIGNED)
             {
-                if (debugMode == DebugMode.AXIS_ALIGNED)
-                {
-                    diceDebugger = DebuggerFactory.CreateDiceDebugger(BoundingRect, CurrentValue.ToString(), $"{name} Debugger");
-                }
-                else if (debugMode == DebugMode.ORIENTED)
-                {
-                    diceDebugger = DebuggerFactory.CreateDiceDebugger(AngledBoundingRect, CurrentValue.ToString(), $"{name} Debugger");
-                }
+                diceDebugger.UpdateDebugger(BoundingRect, CurrentValue.ToString());
             }
-            else
+            else if (boundingBoxType == BBoxType.ORIENTED)
             {
-                if (debugMode == DebugMode.AXIS_ALIGNED)
-                {
-                    diceDebugger.UpdateDebugger(BoundingRect, CurrentValue.ToString());
-                }
-                else if (debugMode == DebugMode.ORIENTED)
-                {
-                    diceDebugger.UpdateDebugger(AngledBoundingRect, CurrentValue.ToString());
-                }
+                diceDebugger.UpdateDebugger(AngledBoundingRect, CurrentValue.ToString());
             }
         }
     }

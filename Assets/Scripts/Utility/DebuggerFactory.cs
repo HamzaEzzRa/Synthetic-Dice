@@ -102,11 +102,19 @@ public class DebuggerFactory
 
     private static Canvas GetOrCreateCanvas()
     {
-        Canvas debugCanvas = GameObject.Find("Debug Canvas").GetComponent<Canvas>();
+        GameObject debugCanvasObject = GameObject.Find("Debug Canvas");
+        Canvas debugCanvas = null;
+        if (debugCanvasObject != null)
+        {
+            debugCanvas = debugCanvasObject.GetComponent<Canvas>();
+        }
+
         if (debugCanvas == null)
         {
             debugCanvas = new GameObject("Debug Canvas").AddComponent<Canvas>();
             debugCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            debugCanvas.additionalShaderChannels = AdditionalCanvasShaderChannels.TexCoord1;
+            debugCanvas.vertexColorAlwaysGammaSpace = true;
 
             CanvasScaler canvasScaler = debugCanvas.gameObject.AddComponent<CanvasScaler>();
             canvasScaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;

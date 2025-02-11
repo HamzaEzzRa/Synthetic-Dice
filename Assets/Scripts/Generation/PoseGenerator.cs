@@ -10,7 +10,10 @@ public class PoseGenerator : MonoBehaviour
 
         foreach (Randomizer randomizer in randomizers)
         {
-            randomizer.Randomize();
+            if (randomizer != null)
+            {
+                randomizer.Randomize();
+            }
         }
     }
 }

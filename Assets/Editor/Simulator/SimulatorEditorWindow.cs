@@ -4,27 +4,64 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using static UnityEngine.GraphicsBuffer;
 
 public class SimulatorEditorWindow : EditorWindow
 {
+    [Serializable]
+    private class SerializablePrimitive<T>
+    {
+        public T value;
+
+        public SerializablePrimitive(T value)
+        {
+            this.value = value;
+        }
+    }
+
+    [Serializable]
+    private class SerializableArray<T>
+    {
+        public T[] data;
+    }
+
     private class MemberInfoWrapper : MemberInfo
     {
         public string c_Name { get; private set; }
         public Type c_MemberType { get; private set; }
+        public object[] c_CustomAttributes { get; private set; }
+        public UnityEngine.Object c_UnityObject { get; private set; }
 
-        public MemberInfoWrapper(string name, Type memberType)
+        public MemberInfoWrapper(string name, Type memberType, object[] customAttributes = null, UnityEngine.Object unityObject = null)
         {
             c_Name = name;
             c_MemberType = memberType;
+            c_CustomAttributes = customAttributes ?? Array.Empty<object>();
+            c_UnityObject = unityObject;
         }
 
         public override string Name => c_Name;
         public override Type DeclaringType => null;
         public override MemberTypes MemberType => MemberTypes.Custom;
         public override Type ReflectedType => null;
-        public override object[] GetCustomAttributes(bool inherit) => Array.Empty<object>();
-        public override object[] GetCustomAttributes(Type attributeType, bool inherit) => Array.Empty<object>();
-        public override bool IsDefined(Type attributeType, bool inherit) => false;
+
+        public override object[] GetCustomAttributes(bool inherit) => c_CustomAttributes;
+
+        public override object[] GetCustomAttributes(Type attributeType, bool inherit)
+        {
+            return c_CustomAttributes.Where(
+                attr => attributeType.IsAssignableFrom(attr.GetType()) || attr.GetType().IsSubclassOf(attributeType)
+            ).ToArray();
+        }
+
+        public override bool IsDefined(Type attributeType, bool inherit)
+        {
+            return c_CustomAttributes.Any(
+                attr => attributeType.IsAssignableFrom(attr.GetType()) || attr.GetType().IsSubclassOf(attributeType)
+            );
+        }
+
+        public UnityEngine.Object GetUnityObject() => c_UnityObject;
     }
 
     private Vector2 scrollPosition;
@@ -35,6 +72,8 @@ public class SimulatorEditorWindow : EditorWindow
 
     private Dictionary<Type, bool> groupFoldouts = new Dictionary<Type, bool>();
     private Dictionary<string, bool> labelFoldouts = new Dictionary<string, bool>();
+
+    private static string copiedDataJson = null;
 
     // Define list of properties/fields to display by name
     private static readonly HashSet<string> TargetProperties = new HashSet<string>
@@ -68,7 +107,7 @@ public class SimulatorEditorWindow : EditorWindow
         "dotMetallic",
         "dotSmoothness",
         "meshContribution",
-        "debugMode",
+        //"debugMode",
 
         // ColorRandomizer
         "randomColors",
@@ -79,7 +118,7 @@ public class SimulatorEditorWindow : EditorWindow
         "minimumDiceSurface",
         "imageEncoding",
         "datasetSize",
-        "yoloFormat",
+        //"yoloFormat",
         "boundingBoxType"
     };
 
@@ -157,8 +196,9 @@ public class SimulatorEditorWindow : EditorWindow
 
                 foreach (var randomizer in randomizers)
                 {
-                    string randomizerName = FormatLabel(randomizer.name);
-                    labelFoldouts[randomizer.name] = EditorGUILayout.Foldout(labelFoldouts[randomizer.name], randomizerName, true);
+                    labelFoldouts[randomizer.name] = DrawFoldoutWithContextMenu(
+                        labelFoldouts[randomizer.name], randomizer.name, true, randomizer
+                    );
 
                     if (labelFoldouts[randomizer.name])
                     {
@@ -231,12 +271,21 @@ public class SimulatorEditorWindow : EditorWindow
         Undo.RecordObject(obj, "Modify " + obj.name); // Record changes for undo
 
         // Display targeted fields
+        FieldInfo[] objectFields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
         {
             if (TargetProperties.Contains(field.Name))
             {
                 object value = field.GetValue(obj);
-                object newValue = DrawField(field, value);
+                object newValue = DrawField(
+                    new MemberInfoWrapper(
+                        $"{obj.name}>{field.Name}",
+                        field.FieldType,
+                        field.GetCustomAttributes(true),
+                        obj
+                    ), 
+                    value
+                );
 
                 if (!Equals(value, newValue))
                 {
@@ -245,6 +294,13 @@ public class SimulatorEditorWindow : EditorWindow
 
                     SerializedObject so = new SerializedObject(obj);
                     so.ApplyModifiedProperties();
+
+                    // Send message to the object to force script OnValidate method to be called
+                    MethodInfo onValidate = type.GetMethod("OnValidate", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (onValidate != null)
+                    {
+                        onValidate.Invoke(obj, null);
+                    }
                 }
             }
         }
@@ -255,7 +311,15 @@ public class SimulatorEditorWindow : EditorWindow
             if (property.CanRead && property.CanWrite && TargetProperties.Contains(property.Name))
             {
                 object value = property.GetValue(obj);
-                object newValue = DrawField(property, value);
+                object newValue = DrawField(
+                    new MemberInfoWrapper(
+                        $"{obj.name}>{property.Name}",
+                        property.PropertyType,
+                        property.GetCustomAttributes(true),
+                        obj
+                    ),
+                    value
+                );
 
                 if (!Equals(value, newValue))
                 {
@@ -264,33 +328,45 @@ public class SimulatorEditorWindow : EditorWindow
 
                     SerializedObject so = new SerializedObject(obj);
                     so.ApplyModifiedProperties();
+
+                    // Send OnValidate message to the object
+                    MethodInfo onValidate = type.GetMethod("OnValidate", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (onValidate != null)
+                    {
+                        onValidate.Invoke(obj, null);
+                    }
                 }
             }
         }
     }
 
-    private object DrawField(MemberInfo member, object value)
+    private object DrawField(MemberInfoWrapper member, object value)
     {
         string label = member.Name;
-        string formattedLabel = FormatLabel(label);
+        string formattedLabel = label.Split('>').Last(); // Remove parent label
+        formattedLabel = FormatLabel(formattedLabel); // Apply Unity label formatting
 
-        Type type;
-        if (member is PropertyInfo pi)
+        Type type = member.c_MemberType;
+
+        // Check and handle custom types
+        if (type == typeof(Vector3Range))
         {
-            type = pi.PropertyType;
+            return DrawVector3Range(label, value, member.GetUnityObject());
         }
-        else if (member is FieldInfo fi)
+        if (type == typeof(DiceMeshData)) // Already serializable, so no need to pass Unity object
         {
-            type = fi.FieldType;
+            return DrawDiceMeshData(label, value);
         }
-        else if (member is MemberInfoWrapper miw)
+        if (type.IsArray)
         {
-            type = miw.c_MemberType;
+            return DrawArrayField(label, value, type, member.GetUnityObject());
         }
-        else
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>))
         {
-            throw new ArgumentException("Member must be a PropertyInfo or FieldInfo or MemberInfoWrapper");
+            return DrawListField(label, value, type, member.GetUnityObject());
         }
+
+        object newValue = null;
 
         // Check and handle custom attributes
         object[] customAttributes = member.GetCustomAttributes(typeof(PropertyAttribute), true);
@@ -301,76 +377,75 @@ public class SimulatorEditorWindow : EditorWindow
                 if (customAttribute is RangeAttribute rangeAttribute) {
                     if (type == typeof(int))
                     {
-                        return EditorGUILayout.IntSlider(formattedLabel, (int)value, (int)rangeAttribute.min, (int)rangeAttribute.max);
+                        newValue = EditorGUILayout.IntSlider(formattedLabel, (int)value, (int)rangeAttribute.min, (int)rangeAttribute.max);
                     }
-                    if (type == typeof(float))
+                    else if (type == typeof(float))
                     {
-                        return EditorGUILayout.Slider(formattedLabel, (float)value, rangeAttribute.min, rangeAttribute.max);
+                        newValue = EditorGUILayout.Slider(formattedLabel, (float)value, rangeAttribute.min, rangeAttribute.max);
                     }
                 }
-                if (customAttribute is FloatRangeSliderAttribute floatRangeSlider)
+                else if (customAttribute is FloatRangeSliderAttribute floatRangeSlider)
                 {
                     return DrawFloatRangeSlider(formattedLabel, value, floatRangeSlider);
                 }
             }
         }
 
-        // Check and handle custom types
-        if (type == typeof(Vector3Range))
+        if (newValue == null)
         {
-            return DrawVector3Range(formattedLabel, value);
-        }
-        if (type == typeof(DiceMeshData))
-        {
-            return DrawDiceMeshData(formattedLabel, value);
-        }
-
-        if (type == typeof(int))
-        {
-            return EditorGUILayout.IntField(formattedLabel, (int)value);
-        }
-        if (type == typeof(float))
-        {
-            return EditorGUILayout.FloatField(formattedLabel, (float)value);
-        }
-        if (type == typeof(string))
-        {
-            return EditorGUILayout.TextField(formattedLabel, (string)value);
-        }
-        if (type == typeof(bool))
-        {
-            return EditorGUILayout.Toggle(formattedLabel, (bool)value);
-        }
-        if (type == typeof(Vector3))
-        {
-            return EditorGUILayout.Vector3Field(formattedLabel, (Vector3)value);
-        }
-        if (type == typeof(Color))
-        {
-            return EditorGUILayout.ColorField(formattedLabel, (Color)value);
-        }
-        if (typeof(UnityEngine.Object).IsAssignableFrom(type))
-        {
-            return EditorGUILayout.ObjectField(formattedLabel, (UnityEngine.Object)value, type, true);
-        }
-        if (type.IsEnum)
-        {
-            return EditorGUILayout.EnumPopup(formattedLabel, (Enum)value);
-        }
-        if (type.IsArray)
-        {
-            return DrawArrayField(formattedLabel, value, type);
-        }
-        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>))
-        {
-            return DrawListField(formattedLabel, value, type);
+            if (type == typeof(int))
+            {
+                newValue = EditorGUILayout.IntField(formattedLabel, (int)value);
+            }
+            else if (type == typeof(float))
+            {
+                newValue = EditorGUILayout.FloatField(formattedLabel, (float)value);
+            }
+            else if (type == typeof(string))
+            {
+                newValue = EditorGUILayout.TextField(formattedLabel, (string)value);
+            }
+            else if (type == typeof(bool))
+            {
+                newValue = EditorGUILayout.Toggle(formattedLabel, (bool)value);
+            }
+            else if (type == typeof(Vector3))
+            {
+                newValue = EditorGUILayout.Vector3Field(formattedLabel, (Vector3)value);
+            }
+            else if (type == typeof(Color))
+            {
+                newValue = EditorGUILayout.ColorField(formattedLabel, (Color)value);
+            }
+            else if (typeof(UnityEngine.Object).IsAssignableFrom(type))
+            {
+                newValue = EditorGUILayout.ObjectField(formattedLabel, (UnityEngine.Object)value, type, true);
+            }
+            else if (type.IsEnum)
+            {
+                newValue = EditorGUILayout.EnumPopup(formattedLabel, (Enum)value);
+            }
         }
 
-        EditorGUILayout.LabelField($"{formattedLabel}: {value} (Unsupported type)");
-        return value;
+        if (newValue != null)
+        {
+            Rect rect = GUILayoutUtility.GetLastRect();
+            if (Event.current.type == EventType.MouseDown && Event.current.button == 1 && rect.Contains(Event.current.mousePosition))
+            {
+                ShowContextMenu(newValue, member.GetUnityObject());
+                Event.current.Use();
+            }
+
+            return newValue;
+        }
+        else
+        {
+            EditorGUILayout.LabelField($"{formattedLabel}: {value} (Unsupported type)");
+            return value;
+        }
     }
 
-    private object DrawArrayField(string label, object value, Type arrayType)
+    private object DrawArrayField(string label, object value, Type arrayType, UnityEngine.Object obj = null)
     {
         Type elementType = arrayType.GetElementType();
         var array = (Array)value;
@@ -383,7 +458,7 @@ public class SimulatorEditorWindow : EditorWindow
             labelFoldouts[label] = false; // Defaults array to folded
         }
 
-        labelFoldouts[label] = EditorGUILayout.Foldout(labelFoldouts[label], formattedLabel, true);
+        labelFoldouts[label] = DrawFoldoutWithContextMenu(labelFoldouts[label], formattedLabel, true, value, obj);
         if (!labelFoldouts[label])
         {
             return array;
@@ -422,7 +497,7 @@ public class SimulatorEditorWindow : EditorWindow
         for (int i = 0; i < array.Length; i++)
         {
             object element = array.GetValue(i);
-            object newElement = DrawField(new MemberInfoWrapper($"{formattedLabel} [{i}]", elementType), element);
+            object newElement = DrawField(new MemberInfoWrapper($"{formattedLabel} [{i}]", elementType, null, obj), element);
 
             if (!Equals(element, newElement))
             {
@@ -434,7 +509,7 @@ public class SimulatorEditorWindow : EditorWindow
         return array;
     }
 
-    private object DrawListField(string label, object value, Type listType)
+    private object DrawListField(string label, object value, Type listType, UnityEngine.Object obj = null)
     {
         Type elementType = listType.GetGenericArguments()[0];
         var list = (System.Collections.IList)value;
@@ -447,7 +522,7 @@ public class SimulatorEditorWindow : EditorWindow
             labelFoldouts[label] = false; // Defaults list to folded
         }
 
-        labelFoldouts[label] = EditorGUILayout.Foldout(labelFoldouts[label], formattedLabel, true);
+        labelFoldouts[label] = DrawFoldoutWithContextMenu(labelFoldouts[label], formattedLabel, true, value, obj);
         if (!labelFoldouts[label])
         {
             return list;
@@ -478,7 +553,7 @@ public class SimulatorEditorWindow : EditorWindow
         for (int i = 0; i < list.Count; i++)
         {
             object element = list[i];
-            object newElement = DrawField(new MemberInfoWrapper($"{formattedLabel} [{i}]", elementType), element);
+            object newElement = DrawField(new MemberInfoWrapper($"{formattedLabel} [{i}]", elementType, null, obj), element);
 
             if (!Equals(element, newElement))
             {
@@ -496,21 +571,20 @@ public class SimulatorEditorWindow : EditorWindow
         float minValue = range.Min;
         float maxValue = range.Max;
 
-        EditorGUILayout.LabelField(label);
-        EditorGUI.indentLevel++;
+        DrawLabelWithContextMenu(label, value);
 
+        EditorGUI.indentLevel++;
         // Min-Max slider logic
         FloatRangeSliderAttribute limit = attribute;
         EditorGUILayout.BeginHorizontal();
-
         minValue = EditorGUILayout.FloatField("", minValue, GUILayout.MaxWidth(110f), GUILayout.ExpandWidth(false));
         EditorGUILayout.MinMaxSlider(
             ref minValue, ref maxValue, limit.Min, limit.Max, GUILayout.MinWidth(100f), GUILayout.ExpandWidth(true)
         );
         maxValue = EditorGUILayout.FloatField("", maxValue, GUILayout.MaxWidth(110f), GUILayout.ExpandWidth(false));
-
         //GUILayout.FlexibleSpace();
         EditorGUILayout.EndHorizontal();
+        EditorGUI.indentLevel--;
 
         if (minValue < limit.Min)
         {
@@ -528,21 +602,23 @@ public class SimulatorEditorWindow : EditorWindow
 
         value = new FloatRange(minValue, maxValue);
 
-        EditorGUI.indentLevel--;
         return value;
     }
 
-    private object DrawVector3Range(string label, object value)
+    private object DrawVector3Range(string label, object value, UnityEngine.Object obj = null)
     {
         Vector3Range range = (Vector3Range)value;
         Vector3 minValue = range.Min;
         Vector3 maxValue = range.Max;
 
-        EditorGUILayout.LabelField(label);
+        string formattedLabel = label.Split('>').Last();
+        formattedLabel = FormatLabel(formattedLabel);
+        DrawLabelWithContextMenu(formattedLabel, value, obj);
+        
         EditorGUI.indentLevel++;
-
         minValue = EditorGUILayout.Vector3Field("Min", minValue);
         maxValue = EditorGUILayout.Vector3Field("Max", maxValue);
+        EditorGUI.indentLevel--;
 
         maxValue.x = Mathf.Max(minValue.x, maxValue.x);
         maxValue.y = Mathf.Max(minValue.y, maxValue.y);
@@ -550,11 +626,10 @@ public class SimulatorEditorWindow : EditorWindow
 
         value = new Vector3Range(minValue, maxValue);
 
-        EditorGUI.indentLevel--;
         return value;
     }
 
-    private object DrawDiceMeshData(string label, object value, bool foldable = false)
+    private object DrawDiceMeshData(string label, object value)
     {
         DiceMeshData diceMeshData = value as DiceMeshData;
 
@@ -563,18 +638,165 @@ public class SimulatorEditorWindow : EditorWindow
             labelFoldouts[label] = false; // Defaults mesh data to folded
         }
 
-        labelFoldouts[label] = EditorGUILayout.Foldout(labelFoldouts[label], label, true);
-        if (!labelFoldouts[label])
+        labelFoldouts[label] = DrawFoldoutWithContextMenu(labelFoldouts[label], label, true, value);
+        if (labelFoldouts[label])
         {
-            return diceMeshData;
+            EditorGUI.indentLevel++;
+            diceMeshData.Mesh = (Mesh)EditorGUILayout.ObjectField("Mesh", diceMeshData.Mesh, typeof(Mesh), false);
+            DrawArrayField($"{label}>ValueToRotation", diceMeshData.ValueToRotation, typeof(Vector3[]));
+            EditorGUI.indentLevel--;
         }
 
-        EditorGUI.indentLevel++;
-        diceMeshData.Mesh = (Mesh)EditorGUILayout.ObjectField("Mesh", diceMeshData.Mesh, typeof(Mesh), false);
-        DrawArrayField($"{label}>ValueToRotation", diceMeshData.ValueToRotation, typeof(Vector3[]));
-        EditorGUI.indentLevel--;
-
         return diceMeshData;
+    }
+
+    private void DrawLabelWithContextMenu(string label, object value, UnityEngine.Object obj = null)
+    {
+        string formattedLabel = FormatLabel(label);
+
+        EditorGUILayout.LabelField(formattedLabel);
+        Rect labelRect = GUILayoutUtility.GetLastRect();
+
+        if (Event.current.type == EventType.MouseDown && Event.current.button == 1 && labelRect.Contains(Event.current.mousePosition))
+        {
+            ShowContextMenu(value, obj);
+            Event.current.Use();
+        }
+    }
+
+    private bool DrawFoldoutWithContextMenu(bool foldout, string content, bool toggleOnLabelClick, object value, UnityEngine.Object obj = null)
+    {
+        string formattedContent = FormatLabel(content);
+
+        bool foldoutState = EditorGUILayout.Foldout(foldout, formattedContent, toggleOnLabelClick);
+        Rect foldoutRect = GUILayoutUtility.GetLastRect();
+
+        if (Event.current.type == EventType.MouseDown && Event.current.button == 1 && foldoutRect.Contains(Event.current.mousePosition))
+        {
+            ShowContextMenu(value, obj);
+            Event.current.Use();
+        }
+
+        return foldoutState;
+    }
+
+    private void ShowContextMenu(object value, UnityEngine.Object obj)
+    {
+        GenericMenu menu = new GenericMenu();
+
+        menu.AddItem(new GUIContent("Copy"), false, () => CopyObject(value));
+
+        if (!string.IsNullOrEmpty(copiedDataJson))
+        {
+            menu.AddItem(new GUIContent("Paste"), false, () => PasteObject(value, obj));
+        }
+        else
+        {
+            menu.AddDisabledItem(new GUIContent("Paste")); // Greyed-out option
+        }
+
+        menu.ShowAsContext();
+    }
+
+    private void CopyObject(object target)
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        if (target.GetType().IsPrimitive || target is string || target is Color)
+        {
+            Type type = target.GetType();
+            Type wrapperType = typeof(SerializablePrimitive<>).MakeGenericType(type);
+            object wrapperInstance = Activator.CreateInstance(wrapperType, target);
+            wrapperType.GetField("value").SetValue(wrapperInstance, target);
+
+            copiedDataJson = JsonUtility.ToJson(wrapperInstance);
+        }
+        else if (target is Array targetArray)
+        {
+            Type elementType = targetArray.GetType().GetElementType();
+            Type wrapperType = typeof(SerializableArray<>).MakeGenericType(elementType);
+            object wrapperInstance = Activator.CreateInstance(wrapperType);
+            wrapperType.GetField("data").SetValue(wrapperInstance, target);
+
+            copiedDataJson = JsonUtility.ToJson(wrapperInstance);
+        }
+        else
+        {
+            copiedDataJson = JsonUtility.ToJson(target);
+        }
+
+        Debug.Log($"Copying ({target.GetType()}): {copiedDataJson}");
+    }
+
+    private void PasteObject(object value, UnityEngine.Object obj = null)
+    {
+        if (value == null || string.IsNullOrEmpty(copiedDataJson))
+        {
+            return;
+        }
+
+        Debug.Log($"Pasting ({value.GetType()}): {copiedDataJson}");
+
+        if (obj != null)
+        {
+            Undo.RecordObject(obj, $"Paste {obj.name} ({value.ToString()})");
+        }
+        else if (value is UnityEngine.Object uo)
+        {
+            Undo.RecordObject(uo, "Paste " + uo.name);
+        }
+
+        if (value is Single targetValue)
+        {
+            Type type = value.GetType();
+            Type wrapperType = typeof(SerializablePrimitive<>).MakeGenericType(type);
+            object wrapperInstance = JsonUtility.FromJson(copiedDataJson, wrapperType);
+
+            FieldInfo valueField = wrapperType.GetField("value");
+            if (valueField != null)
+            {
+                targetValue = (Single)valueField.GetValue(wrapperInstance);
+            }
+        }
+        else if (value is Array targetArray)
+        {
+            Type elementType = targetArray.GetType().GetElementType();
+            Type wrapperType = typeof(SerializableArray<>).MakeGenericType(elementType);
+            object wrapperInstance = JsonUtility.FromJson(copiedDataJson, wrapperType);
+
+            Array newArray = (Array)wrapperType.GetField("data").GetValue(wrapperInstance);
+            if (newArray != null)
+            {
+                targetArray = newArray;
+            }
+        }
+        else
+        {
+            JsonUtility.FromJsonOverwrite(copiedDataJson, value);
+        }
+
+        // Mark as dirty for Undo
+        if (obj != null)
+        {
+            EditorUtility.SetDirty(obj);
+            MethodInfo onValidate = obj.GetType().GetMethod("OnValidate", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (onValidate != null)
+            {
+                onValidate.Invoke(obj, null);
+            }
+        }
+        else if (value is UnityEngine.Object uo)
+        {
+            EditorUtility.SetDirty(uo);
+            MethodInfo onValidate = uo.GetType().GetMethod("OnValidate", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (onValidate != null)
+            {
+                onValidate.Invoke(uo, null);
+            }
+        }
     }
 
     private string FormatLabel(string label)
@@ -584,7 +806,7 @@ public class SimulatorEditorWindow : EditorWindow
             return label;
         }
 
-        var formattedLabel = System.Text.RegularExpressions.Regex.Replace(label, "(\\B[A-Z])", " $1");
+        string formattedLabel = System.Text.RegularExpressions.Regex.Replace(label, "(\\B[A-Z])", " $1");
         return char.ToUpper(formattedLabel[0]) + formattedLabel.Substring(1);
     }
 }

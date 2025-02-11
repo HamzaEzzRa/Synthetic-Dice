@@ -45,18 +45,10 @@ public class DatasetGenerator : MonoBehaviour
         JPEG
     }
 
-    public enum BBoxType
-    {
-        AXIS_ALIGNED,
-        ORIENTED,
-    }
-
     [SerializeField] private Camera renderCamera;
     [SerializeField] PoseGenerator poseGenerator;
 
     [SerializeField] private LayerMask cullingLayerMask;
-
-    [SerializeField] private DiceRandomizer[] dices;
 
     [Header("Settings")]
     [SerializeField] private int width = 640;
@@ -67,7 +59,7 @@ public class DatasetGenerator : MonoBehaviour
     [SerializeField, Min(1)] private int datasetSize = 10000;
 
     [SerializeField] private bool yoloFormat = false;
-    [SerializeField] private BBoxType boundingBoxType = BBoxType.AXIS_ALIGNED;
+    [SerializeField] private DiceRandomizer.BBoxType boundingBoxType = DiceRandomizer.BBoxType.AXIS_ALIGNED;
 
     public EditorCoroutine CurrentCoroutine => currentCoroutine;
     public float CoroutineProgress { get; private set; }
@@ -77,11 +69,13 @@ public class DatasetGenerator : MonoBehaviour
     private Texture2D texture;
     private byte[] image;
 
-    [HideInInspector, SerializeField] private EditorCoroutine currentCoroutine;
+    [SerializeField] private DiceRandomizer[] dices;
+    [SerializeField, HideInInspector] private EditorCoroutine currentCoroutine;
 
     public void Generate()
     {
         Stop();
+        dices = FindObjectsOfType<DiceRandomizer>(true);
 
         currentCoroutine = EditorCoroutineUtility.StartCoroutine(GenerateCoroutine(), this);
     }
@@ -192,7 +186,7 @@ public class DatasetGenerator : MonoBehaviour
                 if (imageRect.Contains(dices[j].BoundingRect, minimumDiceSurface))
                 {
                     // Unity screen-space (0, 0) coordinate is bottom-left, OpenCV is top-left
-                    if (boundingBoxType == BBoxType.AXIS_ALIGNED)
+                    if (boundingBoxType == DiceRandomizer.BBoxType.AXIS_ALIGNED)
                     {
                         SimpleRect rect = dices[j].BoundingRect;
                         SimpleRect yFlippedRect = new SimpleRect(
@@ -203,7 +197,7 @@ public class DatasetGenerator : MonoBehaviour
                         );
                         labelDataList.Add(new LabelData(dices[j].CurrentValue, yFlippedRect));
                     }
-                    else if (boundingBoxType == BBoxType.ORIENTED)
+                    else if (boundingBoxType == DiceRandomizer.BBoxType.ORIENTED)
                     {
                         AngledRect angledRect = dices[j].AngledBoundingRect;
                         SimpleRect yFlippedRect = new SimpleRect(
@@ -284,11 +278,27 @@ public class DatasetGenerator : MonoBehaviour
                         Vector2 max = new Vector2(Mathf.Min(1f, labelData.BBox.xMax / width), Mathf.Min(1f, labelData.BBox.yMax / height));
                         float angle = labelData.angle;
 
-                        // YOLO label: <class_idx> <x_center> <y_center> <width> <height> [<angle>]
-                        string labelLine = $"{labelData.value - 1} {(min.x + max.x) / 2f} {(min.y + max.y) / 2f} {max.x - min.x} {max.y - min.y}";
-                        if (boundingBoxType == BBoxType.ORIENTED)
+                        string labelLine = "";
+                        if (boundingBoxType == DiceRandomizer.BBoxType.AXIS_ALIGNED)
                         {
-                            labelLine += $" {angle}";
+                            // YOLO label: <class_idx> <x_center> <y_center> <width> <height>
+                            labelLine =
+                                $"{labelData.value - 1} {(min.x + max.x) / 2f} {(min.y + max.y) / 2f} {max.x - min.x} {max.y - min.y}";
+                        }
+                        else if (boundingBoxType == DiceRandomizer.BBoxType.ORIENTED)
+                        {
+                            BoundingBoxCorners boxCorners = BoundingBoxCorners.OBBToCorners(min.x, min.y, max.x, max.y, angle);
+                            float x1 = Mathf.Max(0f, boxCorners.x1);
+                            float y1 = Mathf.Max(0f, boxCorners.y1);
+                            float x2 = Mathf.Min(1f, boxCorners.x2);
+                            float y2 = Mathf.Min(1f, boxCorners.y2);
+                            float x3 = Mathf.Min(1f, boxCorners.x3);
+                            float y3 = Mathf.Min(1f, boxCorners.y3);
+                            float x4 = Mathf.Max(0f, boxCorners.x4);
+                            float y4 = Mathf.Max(0f, boxCorners.y4);
+
+                            // YOLO label: <class_idx> <x1> <y1> <x2> <y2> <x3> <y3> <x4> <y4>
+                            labelLine = $"{labelData.value - 1} {x1} {y1} {x2} {y2} {x3} {y3} {x4} {y4}";
                         }
                         writer.WriteLine(labelLine);
                     }
@@ -336,6 +346,21 @@ public class DatasetGenerator : MonoBehaviour
                     writer.Write(",");
                     writer.WriteLine(jsonData.Substring(1, jsonData.Length - 1));
                 }
+            }
+        }
+    }
+
+    private void OnValidate()
+    {
+        for (int i = 0; i < dices.Length; i++)
+        {
+            if (boundingBoxType == DiceRandomizer.BBoxType.AXIS_ALIGNED)
+            {
+                dices[i].boundingBoxType = DiceRandomizer.BBoxType.AXIS_ALIGNED;
+            }
+            else if (boundingBoxType == DiceRandomizer.BBoxType.ORIENTED)
+            {
+                dices[i].boundingBoxType = DiceRandomizer.BBoxType.ORIENTED;
             }
         }
     }

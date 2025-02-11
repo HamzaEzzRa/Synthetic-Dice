@@ -132,6 +132,64 @@ public struct AngledRect
     }
 }
 
+[System.Serializable]
+public struct BoundingBoxCorners
+{
+    public float x1, y1, x2, y2, x3, y3, x4, y4;
+
+    public BoundingBoxCorners(float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4)
+    {
+        this.x1 = x1;
+        this.y1 = y1;
+        this.x2 = x2;
+        this.y2 = y2;
+        this.x3 = x3;
+        this.y3 = y3;
+        this.x4 = x4;
+        this.y4 = y4;
+    }
+
+    public static BoundingBoxCorners OBBToCorners(float xMin, float yMin, float xMax, float yMax, float angle)
+    {
+        float x_c = (xMin + xMax) / 2f;
+        float y_c = (yMin + yMax) / 2f;
+        float w = xMax - xMin;
+        float h = yMax - yMin;
+
+        // Define unrotated corner offsets (relative to center)
+        Vector2[] corners = new Vector2[4]
+        {
+            new Vector2(-w / 2,  h / 2), // Top-left
+            new Vector2( w / 2,  h / 2), // Top-right
+            new Vector2( w / 2, -h / 2), // Bottom-right
+            new Vector2(-w / 2, -h / 2)  // Bottom-left
+        };
+
+        float theta = angle * Mathf.Deg2Rad;
+        float cosTheta = Mathf.Cos(theta);
+        float sinTheta = Mathf.Sin(theta);
+
+        // Rotate and translate corners
+        for (int i = 0; i < corners.Length; i++)
+        {
+            float x = corners[i].x;
+            float y = corners[i].y;
+
+            float xRotated = cosTheta * x - sinTheta * y;
+            float yRotated = sinTheta * x + cosTheta * y;
+
+            corners[i] = new Vector2(x_c + xRotated, y_c + yRotated);
+        }
+
+        return new BoundingBoxCorners(
+            corners[0].x, corners[0].y,
+            corners[1].x, corners[1].y,
+            corners[2].x, corners[2].y,
+            corners[3].x, corners[3].y
+        );
+    }
+}
+
 public class RectDebugger : MonoBehaviour
 {
     public RectTransform RectTransform
