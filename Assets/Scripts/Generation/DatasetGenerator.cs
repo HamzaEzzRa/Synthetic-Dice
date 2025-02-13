@@ -206,7 +206,7 @@ public class DatasetGenerator : MonoBehaviour
                             angledRect.Rect.xMax,
                             height - angledRect.Rect.yMin
                         );
-                        labelDataList.Add(new LabelData(dices[j].CurrentValue, yFlippedRect, angledRect.Angle));
+                        labelDataList.Add(new LabelData(dices[j].CurrentValue, yFlippedRect, -angledRect.Angle)); // OpenCV angle is clockwise
                     }
                 }
             }
@@ -274,28 +274,32 @@ public class DatasetGenerator : MonoBehaviour
                     for (int j = 0; j < labelDataArray.Length; j++)
                     {
                         LabelData labelData = labelDataArray[j];
-                        Vector2 min = new Vector2(Mathf.Max(0f, labelData.BBox.xMin / width), Mathf.Max(0f, labelData.BBox.yMin / height));
-                        Vector2 max = new Vector2(Mathf.Min(1f, labelData.BBox.xMax / width), Mathf.Min(1f, labelData.BBox.yMax / height));
-                        float angle = labelData.angle;
 
                         string labelLine = "";
                         if (boundingBoxType == DiceRandomizer.BBoxType.AXIS_ALIGNED)
                         {
+                            Vector2 min = new Vector2(Mathf.Max(0f, labelData.BBox.xMin / width), Mathf.Max(0f, labelData.BBox.yMin / height));
+                            Vector2 max = new Vector2(Mathf.Min(1f, labelData.BBox.xMax / width), Mathf.Min(1f, labelData.BBox.yMax / height));
+
                             // YOLO label: <class_idx> <x_center> <y_center> <width> <height>
                             labelLine =
                                 $"{labelData.value - 1} {(min.x + max.x) / 2f} {(min.y + max.y) / 2f} {max.x - min.x} {max.y - min.y}";
                         }
                         else if (boundingBoxType == DiceRandomizer.BBoxType.ORIENTED)
                         {
+                            Vector2 min = new Vector2(labelData.BBox.xMin, labelData.BBox.yMin);
+                            Vector2 max = new Vector2(labelData.BBox.xMax, labelData.BBox.yMax);
+                            float angle = labelData.angle;
+
                             BoundingBoxCorners boxCorners = BoundingBoxCorners.OBBToCorners(min.x, min.y, max.x, max.y, angle);
-                            float x1 = Mathf.Max(0f, boxCorners.x1);
-                            float y1 = Mathf.Max(0f, boxCorners.y1);
-                            float x2 = Mathf.Min(1f, boxCorners.x2);
-                            float y2 = Mathf.Min(1f, boxCorners.y2);
-                            float x3 = Mathf.Min(1f, boxCorners.x3);
-                            float y3 = Mathf.Min(1f, boxCorners.y3);
-                            float x4 = Mathf.Max(0f, boxCorners.x4);
-                            float y4 = Mathf.Max(0f, boxCorners.y4);
+                            float x1 = Mathf.Min(1f, Mathf.Max(0f, boxCorners.x1 / width));
+                            float y1 = Mathf.Min(1f, Mathf.Max(0f, boxCorners.y1 / height));
+                            float x2 = Mathf.Min(1f, Mathf.Max(0f, boxCorners.x2 / width));
+                            float y2 = Mathf.Min(1f, Mathf.Max(0f, boxCorners.y2 / height));
+                            float x3 = Mathf.Min(1f, Mathf.Max(0f, boxCorners.x3 / width));
+                            float y3 = Mathf.Min(1f, Mathf.Max(0f, boxCorners.y3 / height));
+                            float x4 = Mathf.Min(1f, Mathf.Max(0f, boxCorners.x4 / width));
+                            float y4 = Mathf.Min(1f, Mathf.Max(0f, boxCorners.y4 / height));
 
                             // YOLO label: <class_idx> <x1> <y1> <x2> <y2> <x3> <y3> <x4> <y4>
                             labelLine = $"{labelData.value - 1} {x1} {y1} {x2} {y2} {x3} {y3} {x4} {y4}";

@@ -159,10 +159,10 @@ public struct BoundingBoxCorners
         // Define unrotated corner offsets (relative to center)
         Vector2[] corners = new Vector2[4]
         {
-            new Vector2(-w / 2,  h / 2), // Top-left
-            new Vector2( w / 2,  h / 2), // Top-right
-            new Vector2( w / 2, -h / 2), // Bottom-right
-            new Vector2(-w / 2, -h / 2)  // Bottom-left
+            new Vector2(-w / 2f,  h / 2f), // Top-left
+            new Vector2( w / 2f,  h / 2f), // Top-right
+            new Vector2( w / 2f, -h / 2f), // Bottom-right
+            new Vector2(-w / 2f, -h / 2f)  // Bottom-left
         };
 
         float theta = angle * Mathf.Deg2Rad;

@@ -114,6 +114,14 @@ public class DiceRandomizer : Randomizer
 
     [SerializeField] private DiceDebugger diceDebugger;
 
+    private void Start()
+    {
+        if (Enabled)
+        {
+            Randomize();
+        }
+    }
+
     private void Update()
     {
         if (Enabled)
