@@ -40,7 +40,7 @@ public class DiceRandomizer : Randomizer
 
     [Header("Bounding Box")]
     [SerializeField, Range(0f, 1f)] private float meshContribution = 0.1f;
-    public BBoxType boundingBoxType;
+    public BBoxType boxType;
 
     public bool Enabled
     {
@@ -307,7 +307,7 @@ public class DiceRandomizer : Randomizer
         );
 
         // Calculate the oriented bounding box if needed (slower)
-        if (boundingBoxType == BBoxType.ORIENTED)
+        if (boxType == BBoxType.ORIENTED)
         {
             Vector2[] diceHull = ComputeConvexHull(screenPoints); // Compute convex hull in 2D screen space
             AngledBoundingRect = ComputeOrientedBoundingBox(diceHull); // Compute the minimum-area bounding rectangle
@@ -315,22 +315,22 @@ public class DiceRandomizer : Randomizer
 
         if (diceDebugger == null || !diceDebugger.gameObject.activeInHierarchy)
         {
-            if (boundingBoxType == BBoxType.AXIS_ALIGNED)
+            if (boxType == BBoxType.AXIS_ALIGNED)
             {
                 diceDebugger = DebuggerFactory.CreateDiceDebugger(BoundingRect, CurrentValue.ToString(), $"{name} Debugger");
             }
-            else if (boundingBoxType == BBoxType.ORIENTED)
+            else if (boxType == BBoxType.ORIENTED)
             {
                 diceDebugger = DebuggerFactory.CreateDiceDebugger(AngledBoundingRect, CurrentValue.ToString(), $"{name} Debugger");
             }
         }
         else
         {
-            if (boundingBoxType == BBoxType.AXIS_ALIGNED)
+            if (boxType == BBoxType.AXIS_ALIGNED)
             {
                 diceDebugger.UpdateDebugger(BoundingRect, CurrentValue.ToString());
             }
-            else if (boundingBoxType == BBoxType.ORIENTED)
+            else if (boxType == BBoxType.ORIENTED)
             {
                 diceDebugger.UpdateDebugger(AngledBoundingRect, CurrentValue.ToString());
             }

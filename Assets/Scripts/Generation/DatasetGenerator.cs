@@ -374,14 +374,7 @@ public class DatasetGenerator : MonoBehaviour
     {
         for (int i = 0; i < dices.Length; i++)
         {
-            if (boundingBoxType == DiceRandomizer.BBoxType.AXIS_ALIGNED)
-            {
-                dices[i].boundingBoxType = DiceRandomizer.BBoxType.AXIS_ALIGNED;
-            }
-            else if (boundingBoxType == DiceRandomizer.BBoxType.ORIENTED)
-            {
-                dices[i].boundingBoxType = DiceRandomizer.BBoxType.ORIENTED;
-            }
+            dices[i].boxType = boundingBoxType;
         }
     }
 }

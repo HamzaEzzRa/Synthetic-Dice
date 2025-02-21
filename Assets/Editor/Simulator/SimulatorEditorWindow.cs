@@ -97,7 +97,7 @@ public class SimulatorEditorWindow : EditorWindow
         "ambientIntensityRange",
 
         // DiceRandomizer
-        "meshData",
+        //"meshData",
         "diceProbability",
         "diceScaleRange",
         "diceColors",
@@ -106,7 +106,7 @@ public class SimulatorEditorWindow : EditorWindow
         "dotColors",
         "dotMetallic",
         "dotSmoothness",
-        "meshContribution",
+        //"meshContribution",
         //"debugMode",
 
         // ColorRandomizer
