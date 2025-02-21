@@ -3,6 +3,7 @@ using UnityEngine;
 using System.IO;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 
 using Unity.EditorCoroutines.Editor;
 
@@ -282,8 +283,17 @@ public class DatasetGenerator : MonoBehaviour
                             Vector2 max = new Vector2(Mathf.Min(1f, labelData.BBox.xMax / width), Mathf.Min(1f, labelData.BBox.yMax / height));
 
                             // YOLO label: <class_idx> <x_center> <y_center> <width> <height>
-                            labelLine =
-                                $"{labelData.value - 1} {(min.x + max.x) / 2f} {(min.y + max.y) / 2f} {max.x - min.x} {max.y - min.y}";
+                            //labelLine =
+                            //    $"{labelData.value - 1} {(min.x + max.x) / 2f} {(min.y + max.y) / 2f} {max.x - min.x} {max.y - min.y}";
+                            labelLine = string.Format(
+                                CultureInfo.InvariantCulture,
+                                "{0} {1} {2} {3} {4}",
+                                labelData.value - 1,
+                                (min.x + max.x) / 2f,
+                                (min.y + max.y) / 2f,
+                                max.x - min.x,
+                                max.y - min.y
+                            );
                         }
                         else if (boundingBoxType == DiceRandomizer.BBoxType.ORIENTED)
                         {
@@ -302,7 +312,13 @@ public class DatasetGenerator : MonoBehaviour
                             float y4 = Mathf.Min(1f, Mathf.Max(0f, boxCorners.y4 / height));
 
                             // YOLO label: <class_idx> <x1> <y1> <x2> <y2> <x3> <y3> <x4> <y4>
-                            labelLine = $"{labelData.value - 1} {x1} {y1} {x2} {y2} {x3} {y3} {x4} {y4}";
+                            //labelLine = $"{labelData.value - 1} {x1} {y1} {x2} {y2} {x3} {y3} {x4} {y4}";
+                            labelLine = string.Format(
+                                CultureInfo.InvariantCulture,
+                                "{0} {1} {2} {3} {4} {5} {6} {7} {8}",
+                                labelData.value - 1,
+                                x1, y1, x2, y2, x3, y3, x4, y4
+                            );
                         }
                         writer.WriteLine(labelLine);
                     }

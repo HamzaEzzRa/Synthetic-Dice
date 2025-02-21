@@ -14,6 +14,15 @@ public static class LoadSceneOnStartup
         {
             EditorSceneManager.OpenScene(SceneToLoad);
 
+            var gameViewType = typeof(EditorWindow).Assembly.GetType("UnityEditor.GameView");
+            EditorWindow gameViewWindow = EditorWindow.GetWindow(gameViewType);
+
+            var method = gameViewWindow.GetType().GetMethod(
+                "SizeSelectionCallback",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance
+            );
+            method?.Invoke(gameViewWindow, new object[] { "640x480" });
+
             if (System.IO.File.Exists(LayoutFile))
             {
                 EditorUtility.LoadWindowLayout(LayoutFile);
